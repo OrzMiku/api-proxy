@@ -1,29 +1,9 @@
 // server/routes/[...].ts
 
-/**
- * 从环境变量中解析代理配置
- * @returns { {path: string, target: string}[] }
- */
-function getProxyTargets() {
-  const env = process.env;
-  const targets = [];
-
-  for (const key in env) {
-    if (key.startsWith("PROXY_") && key.endsWith("_TARGET")) {
-      const path = `/${key.replace("PROXY_", "").replace("_TARGET", "").toLowerCase()}`;
-      const target = env[key];
-      if (target) {
-        targets.push({ path, target });
-      }
-    }
-  }
-  
-  return targets;
-}
+import { proxyTargets } from "~/utils/proxy";
 
 export default defineEventHandler(async (event) => {
   const path = event.path;
-  const proxyTargets = getProxyTargets();
 
   // 寻找匹配的代理目标
   const targetConfig = proxyTargets.find((item) => path.startsWith(item.path));
@@ -40,10 +20,21 @@ export default defineEventHandler(async (event) => {
     delete headers["x-forwarded-for"];
     delete headers["x-real-ip"];
 
-    // 转发请求到目标 API
-    return proxyRequest(event, targetUrl.toString(), {
-      headers,
-    });
+    try {
+      // 转发请求到目标 API
+      return await proxyRequest(event, targetUrl.toString(), {
+        headers,
+      });
+    }
+    catch (error) {
+      // 如果上游服务出错，将错误信息和状态码返回给客户端
+      console.error(`[Proxy Error] Failed to proxy to ${targetUrl.toString()}:`, error);
+      setResponseStatus(event, error.statusCode || 500);
+      return {
+        error: "Proxy request failed",
+        details: error.message,
+      };
+    }
   }
 
   // 如果没有找到匹配的路由，返回 404
